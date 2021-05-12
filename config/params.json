@@ -1,0 +1,11 @@
+[
+   {
+      "ParameterKey":"S3BucketSources",
+      "ParameterValue":"{S3BucketSources}"
+   },
+
+   {
+      "ParameterKey":"S3SourcesPrefix",
+      "ParameterValue":"{S3SourcesPrefix}"
+   }
+]

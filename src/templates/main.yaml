@@ -1,0 +1,138 @@
+#
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0 Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+#
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: Integration stack between Security Hub and Device Defender
+
+Parameters:
+
+  S3BucketSources:
+    Type: String
+    Description: S3 bucket with sources 
+    MaxLength: 63
+    MinLength: 3
+    Default: resources
+
+  S3SourcesPrefix:
+    Type: String
+    Description: S3 bucket prefix with sources with ending slash  
+    MaxLength: 63
+    MinLength: 3
+    Default: honeypots/ 
+
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+
+    - Label:
+        default:  General
+      Parameters:
+      - S3BucketSources
+      - S3SourcesPrefix
+
+    ParameterLabels:
+      S3BucketSources:
+        default: Sources S3 Bucket
+      S3SourcesPrefix: 
+        default: Sources S3 Prefix 
+
+Resources:
+  RegionalS3Objects:
+     Type: "AWS::CloudFormation::Stack" 
+     Properties:
+        TemplateURL: !Sub "https://s3.amazonaws.com/${S3BucketSources}/${S3SourcesPrefix}copy-s3obj-to-regional-s3bucket.yaml"
+        Parameters:
+          S3BucketSources: !Ref S3BucketSources
+          S3SourcesPrefix: !Ref S3SourcesPrefix
+          S3Objects: "lambda_functions.zip"
+          Counter: 2
+        Tags:
+         - Key: Name
+           Value: !Sub '${AWS::StackName}-CopyRegionalS3Bucket-NestedStack'
+
+  LambdaServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub IoT-Defender-to-SecurityHub-Lambda-Role-${AWS::Region}     
+      Description: "Import IoT Defender finding to SecuriyHub"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: import-iotdefender-securityhub
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'securityhub:BatchImportFindings'
+                  - 'securityhub:UpdateFindings'
+                  - 'securityhub:BatchUpdateFindings'
+                  - 'securityhub:GetFindings'
+                Resource:
+                  - '*'
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'iot:DescribeAuditTask'
+                  - 'iot:ListAuditFindings'
+                Resource: 
+                  - '*'
+
+  IoTSns:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: IoT Defender report notification
+      TopicName: iot-defender-report-notification
+      KmsMasterKeyId: alias/aws/sns
+  
+  SnsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !GetAtt ServiceLambda.Arn
+      Protocol: lambda
+      TopicArn: !Ref IoTSns
+
+  LambdaPermissions:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref ServiceLambda
+      Action: 'lambda:InvokeFunction'
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref IoTSns
+
+  ServiceLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: "import-iot-defender-to-security-hub"
+      Handler: import_security_hub.lambda_handler
+      Runtime: python3.8
+      Code:
+        S3Bucket: !GetAtt RegionalS3Objects.Outputs.RegionalS3Bucket
+        S3Key: !Sub '${S3SourcesPrefix}lambda_functions.zip'
+      Description: 'Imports IoT Defender findings to Security Hub'
+      Timeout: 900
+      Role: !GetAtt LambdaServiceRole.Arn
+      Environment:
+        Variables:
+          Sns: !Ref IoTSns
+
+Outputs:
+  DeviceDefenderSNS:
+    Description: SNS used to analyze Device Defender results
+    Value: !Ref IoTSns
+    Export:
+      Name: "DeviceDefenderSNS"
