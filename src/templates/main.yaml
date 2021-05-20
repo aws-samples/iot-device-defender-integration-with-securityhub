@@ -14,14 +14,14 @@ Parameters:
     Description: S3 bucket with sources 
     MaxLength: 63
     MinLength: 3
-    Default: resources
+    Default: awsiammedia
 
   S3SourcesPrefix:
     Type: String
     Description: S3 bucket prefix with sources with ending slash  
-    MaxLength: 63
+    MaxLength: 120
     MinLength: 3
-    Default: honeypots/ 
+    Default: public/sample/804-Import-Device-Defender-audit-findings/
 
 Metadata:
   'AWS::CloudFormation::Interface':
