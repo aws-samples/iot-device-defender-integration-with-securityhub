@@ -4,7 +4,7 @@ In this solution, we show how you can import AWS IoT Device Defender audit findi
 
 You’ll learn how the integration of IoT security findings into Security Hub works. After you deploy the solution, every failed audit check will be recorded as a Security Hub finding.  The findings within Security Hub provides an AWS IoT Device Defender finding severity level and direct link to the AWS IoT Device Defender console so that you can take possible remediation actions. If you address the underlying findings or suppress the findings by using the AWS IoT Device Defender console, the solution function will automatically archive any related findings in Security Hub when a new audit occurs.
 
-For more information see AWS Security Blog  [How to import AWS IoT Device Defender audit findings into Security Hub](https://aws.amazon.com/blogs/security/) 
+For more information see AWS Security Blog  [How to import AWS IoT Device Defender audit findings into Security Hub](https://aws.amazon.com/blogs/security/how-to-import-aws-iot-device-defender-audit-findings-into-security-hub/) 
 ## Deploying with CLI
 
 - Create or re-use existing a S3 bucket in your account where you will upload the sources.  
@@ -19,7 +19,7 @@ Example:
  
 ## Deploying with LaunchStack button
 
- See AWS Security Blog [How to import AWS IoT Device Defender audit findings into Security Hub](https://aws.amazon.com/blogs/security/)
+ See AWS Security Blog [How to import AWS IoT Device Defender audit findings into Security Hub](https://aws.amazon.com/blogs/security/how-to-import-aws-iot-device-defender-audit-findings-into-security-hub/)
 
 ## Contributing  
 
