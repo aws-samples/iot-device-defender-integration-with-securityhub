@@ -18,7 +18,7 @@ Example:
  
 ## Deploying with LaunchStack button
 
- See AWS Security Blog [How to import AWS IoT Device Defender audit findings into Security Hub](https://aws.amazon.com/blogs/security/how-to-import-aws-iot-device-defender-audit-findings-into-security-hub/)
+ See AWS Security Blog [Importing AWS IoT Device Defender audit and detect findings into Security Hub](https://aws.amazon.com/blogs/iot/importing-aws-iot-device-defender-audit-and-detect-findings-into-security-hub/)
 
 ## Contributing  
 
