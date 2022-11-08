@@ -32,7 +32,7 @@ Parameters:
   S3SourcesPrefix:
     Type: String
     Description: S3 prefix with sources WITH ending slash  
-    MaxLength: 120
+    MaxLength: 63
     MinLength: 3
     Default: prefix
 
@@ -114,10 +114,10 @@ Resources:
   CopyZipsFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName:  "CopyZipsIoTIntegrationFunction"
+      FunctionName:  "CopyZipsIoTDefenderFunction"
       Description: Copies objects from a source S3 bucket to a destination
       Handler: index.handler
-      Runtime: python3.6
+      Runtime: python3.8
       Role: !GetAtt 'CopyZipsRole.Arn'
       Timeout: 240
       Code:

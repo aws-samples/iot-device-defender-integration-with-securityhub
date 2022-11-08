@@ -14,18 +14,72 @@ Parameters:
     Description: S3 bucket with sources 
     MaxLength: 63
     MinLength: 3
-    Default: awsiammedia
+    Default: resources
 
   S3SourcesPrefix:
     Type: String
     Description: S3 bucket prefix with sources with ending slash  
-    MaxLength: 120
+    MaxLength: 63
     MinLength: 3
-    Default: public/sample/804-Import-Device-Defender-audit-findings/
+    Default: iot/ 
+
+  EnableAudit:
+      Type: String
+      Default: False
+      AllowedValues:
+        - true
+        - false
+
+  EnableMLDetect:
+      Type: String
+      Default: False
+      AllowedValues:
+        - true
+        - false
+
+  EnableRulesDetect:
+      Type: String
+      Default: False
+      AllowedValues:
+        - true
+        - false
+
+  DetectMLConfidenceLevel:
+      Type: String
+      Default: HIGH
+      AllowedValues:
+        - HIGH
+        - MEDIUM
+        - LOW
+
+  DeviceSideMetrics:
+      Type: String
+      Default: false
+      AllowedValues:
+        - true
+        - false
+
+  DeviceTargetARNs:
+      Type: CommaDelimitedList
+      Default: "ALL"
 
 Metadata:
   'AWS::CloudFormation::Interface':
     ParameterGroups:
+
+    - Label:
+        default:  AWS IoT Device Defender Audit
+      Parameters:
+      - EnableAudit
+
+    - Label:
+        default:  AWS IoT Device Defender Detect
+      Parameters:
+      - EnableMLDetect
+      - EnableRulesDetect
+      - DeviceSideMetrics
+      - DetectMLConfidenceLevel
+      - DeviceTargetARNs
 
     - Label:
         default:  General
@@ -33,13 +87,397 @@ Metadata:
       - S3BucketSources
       - S3SourcesPrefix
 
+
     ParameterLabels:
       S3BucketSources:
         default: Sources S3 Bucket
       S3SourcesPrefix: 
-        default: Sources S3 Prefix 
+        default: Sources S3 Prefix
+      EnableAudit:
+        default: Enable on-going audits for your fleet
+      EnableMLDetect:
+        default: Create security profile using machine learning models
+      EnableRulesDetect:
+        default: Create security profile using rules of expected device behavior
+      DeviceSideMetrics:
+        default: Create a separate security profile for device-side metrics 
+      DetectMLConfidenceLevel:
+        default: Confidence level for ML-based anomalies
+      DeviceTargetARNs:
+        default: Choose a subset of device ARN targets 
+
+
+Conditions:
+  DeviceMetricsAllDevices: !Equals
+    - !Select [ 0, !Ref DeviceTargetARNs ] 
+    - ALL
+  CreateMLDetect: !Equals 
+    - !Ref EnableMLDetect
+    - true
+  CreateRulesDetect: !Equals 
+    - !Ref EnableRulesDetect
+    - true
+  CreateAudit: !Equals 
+    - !Ref EnableAudit
+    - true
+  CreateDeviceMetricsMLProfile: !And [ !Condition CreateMLDetect , !Equals [ !Ref DeviceSideMetrics , true ] ]
+  CreateDeviceMetricsRulesProfile: !And [ !Condition CreateRulesDetect , !Equals [ !Ref DeviceSideMetrics , true ] ]
 
 Resources:
+  DeviceDefenderRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - iot.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: "DeviceDefenderPermissions"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Action: 
+                  - "iot:GetLoggingOptions"
+                  - "iot:GetV2LoggingOptions"
+                  - "iot:ListCACertificates"
+                  - "iot:ListCertificates"
+                  - "iot:DescribeCACertificate"
+                  - "iot:DescribeCertificate"
+                  - "iot:ListPolicies"
+                  - "iot:GetPolicy"
+                  - "iot:GetEffectivePolicies"
+                  - "iot:ListRoleAliases"
+                  - "iot:DescribeRoleAlias"
+                  - "cognito-identity:GetIdentityPoolRoles"
+                  - "iam:ListRolePolicies"
+                  - "iam:ListAttachedRolePolicies"
+                  - "iam:GetRole"
+                  - "iam:GetPolicy"
+                  - "iam:GetPolicyVersion"
+                  - "iam:GetRolePolicy"
+                  - "iam:GenerateServiceLastAccessedDetails"
+                  - "iam:GetServiceLastAccessedDetails"
+                  Effect: "Allow"
+                  Resource: "*"
+  
+  IoTAuditFindingTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: IoT Defender audit notifications
+      KmsMasterKeyId: alias/aws/sns
+
+  IoTDetectViolationsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: IoT Defender detect notifications
+      KmsMasterKeyId: alias/aws/sns
+
+  IoTAllowSNSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              "Service": [ "iot.amazonaws.com"]
+            Action: "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        - PolicyName: "AllowSNSPublish"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Action: 
+                  - "sns:Publish"
+                Effect: "Allow"
+                Resource: 
+                - !Ref IoTAuditFindingTopic
+                - !Ref IoTDetectViolationsTopic
+
+  AccountAuditConfiguration:
+    Type: AWS::IoT::AccountAuditConfiguration
+    Condition: CreateAudit
+    Properties:
+      AccountId: !Sub "${AWS::AccountId}"
+      AuditCheckConfigurations:
+        AuthenticatedCognitoRoleOverlyPermissiveCheck: 
+          Enabled: True
+        CaCertificateExpiringCheck: 
+          Enabled: True
+        CaCertificateKeyQualityCheck: 
+          Enabled: True
+        ConflictingClientIdsCheck: 
+          Enabled: True
+        DeviceCertificateExpiringCheck: 
+          Enabled: True
+        DeviceCertificateKeyQualityCheck: 
+          Enabled: True
+        DeviceCertificateSharedCheck: 
+          Enabled: True
+        IotPolicyOverlyPermissiveCheck: 
+          Enabled: True
+        IotRoleAliasAllowsAccessToUnusedServicesCheck: 
+          Enabled: True
+        IotRoleAliasOverlyPermissiveCheck: 
+          Enabled: True
+        LoggingDisabledCheck: 
+          Enabled: True
+        RevokedCaCertificateStillActiveCheck: 
+          Enabled: True
+        RevokedDeviceCertificateStillActiveCheck: 
+          Enabled: True
+        UnauthenticatedCognitoRoleOverlyPermissiveCheck: 
+          Enabled: True
+      RoleArn: !GetAtt DeviceDefenderRole.Arn
+      AuditNotificationTargetConfigurations:
+        Sns:
+          TargetArn: !Ref IoTAuditFindingTopic
+          RoleArn: !GetAtt IoTAllowSNSRole.Arn
+          Enabled: true
+
+  ScheduleDailyAudit:
+    Condition: CreateAudit
+    Type: AWS::IoT::ScheduledAudit
+    Properties:
+      ScheduledAuditName: "DailyAudit"
+      Frequency: "DAILY"
+      TargetCheckNames: 
+        - UNAUTHENTICATED_COGNITO_ROLE_OVERLY_PERMISSIVE_CHECK
+        - AUTHENTICATED_COGNITO_ROLE_OVERLY_PERMISSIVE_CHECK
+        - CA_CERTIFICATE_EXPIRING_CHECK
+        - CA_CERTIFICATE_KEY_QUALITY_CHECK
+        - CONFLICTING_CLIENT_IDS_CHECK
+        - DEVICE_CERTIFICATE_EXPIRING_CHECK
+        - DEVICE_CERTIFICATE_KEY_QUALITY_CHECK
+        - DEVICE_CERTIFICATE_SHARED_CHECK
+        - IOT_POLICY_OVERLY_PERMISSIVE_CHECK
+        - IOT_ROLE_ALIAS_ALLOWS_ACCESS_TO_UNUSED_SERVICES_CHECK
+        - IOT_ROLE_ALIAS_OVERLY_PERMISSIVE_CHECK
+        - LOGGING_DISABLED_CHECK
+        - REVOKED_CA_CERTIFICATE_STILL_ACTIVE_CHECK
+        - REVOKED_DEVICE_CERTIFICATE_STILL_ACTIVE_CHECK
+    DependsOn:
+      - AccountAuditConfiguration
+
+  CloudSideSecurityMLProfile:
+    Condition: CreateMLDetect
+    Type: AWS::IoT::SecurityProfile
+    Properties:
+      SecurityProfileName: IoTDeviceDefenderCloudSideMLProfile
+      SecurityProfileDescription: ML-based ecurity profile related to cloud side metrics
+      AlertTargets: 
+        SNS:
+          AlertTargetArn: !Ref IoTDetectViolationsTopic
+          RoleArn: !GetAtt IoTAllowSNSRole.Arn     
+      TargetArns:
+        - !If [ DeviceMetricsAllDevices, !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:all/things' , !Ref DeviceTargetARNs]
+      Behaviors:
+        - Name: "AuthorizationFailures-High"
+          Metric: "aws:num-authorization-failures"
+          Criteria:
+            MlDetectionConfig:
+              ConfidenceLevel: !Ref DetectMLConfidenceLevel
+          SuppressAlerts: False
+        - Name: "ConnectionAttempts-Low"
+          Metric: "aws:num-connection-attempts"
+          Criteria:
+            MlDetectionConfig:
+              ConfidenceLevel: !Ref DetectMLConfidenceLevel
+          SuppressAlerts: False
+        - Name: "Disconnects-Low"
+          Metric: "aws:num-disconnects"
+          Criteria:
+            MlDetectionConfig:
+              ConfidenceLevel: !Ref DetectMLConfidenceLevel
+          SuppressAlerts: False
+        - Name: "MessageSize-Medium"
+          Metric: "aws:message-byte-size"
+          Criteria:
+            MlDetectionConfig:
+              ConfidenceLevel: !Ref DetectMLConfidenceLevel
+          SuppressAlerts: False
+        - Name: "MessagesSent-Medium"
+          Metric: "aws:num-messages-sent"
+          Criteria:
+            MlDetectionConfig:
+              ConfidenceLevel: !Ref DetectMLConfidenceLevel
+          SuppressAlerts: False
+        - Name: "MessagesReceived-Medium"
+          Metric: "aws:num-messages-received"
+          Criteria:
+            MlDetectionConfig:
+              ConfidenceLevel: !Ref DetectMLConfidenceLevel
+
+  CloudSideSecurityRulesProfile:
+    Condition: CreateRulesDetect
+    Type: AWS::IoT::SecurityProfile
+    Properties:
+      SecurityProfileName: IoTDeviceDefenderCloudSideRulesProfile
+      SecurityProfileDescription: Rules-based security profile related to cloud side metrics
+      AlertTargets: 
+        SNS:
+          AlertTargetArn: !Ref IoTDetectViolationsTopic
+          RoleArn: !GetAtt IoTAllowSNSRole.Arn     
+      TargetArns:
+        - !If [ DeviceMetricsAllDevices, !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:all/things' , !Ref DeviceTargetARNs]
+      Behaviors:
+        - Name: "AuthorizationFailures-High"
+          Metric: "aws:num-authorization-failures"
+          Criteria:
+            ConsecutiveDatapointsToAlarm: 1
+            ConsecutiveDatapointsToClear: 1
+            Value: 
+              Count: 0
+            ComparisonOperator: "less-than-equals"
+            DurationSeconds: 300
+          SuppressAlerts: False
+        - Name: "ConnectionAttempts-Low"
+          Metric: "aws:num-connection-attempts"
+          Criteria:
+            ConsecutiveDatapointsToAlarm: 1
+            ConsecutiveDatapointsToClear: 1
+            Value: 
+              Count: 0
+            ComparisonOperator: "less-than-equals"
+            DurationSeconds: 300
+          SuppressAlerts: False
+        - Name: "Disconnects-Low"
+          Metric: "aws:num-disconnects"
+          Criteria:
+            ConsecutiveDatapointsToAlarm: 1
+            ConsecutiveDatapointsToClear: 1
+            Value: 
+              Count: 0
+            ComparisonOperator: "less-than-equals"
+            DurationSeconds: 300
+          SuppressAlerts: False
+        - Name: "MessageSize-Medium"
+          Metric: "aws:message-byte-size"
+          Criteria:
+            ConsecutiveDatapointsToAlarm: 1
+            ConsecutiveDatapointsToClear: 1
+            StatisticalThreshold:
+              Statistic: p99
+            DurationSeconds: 3600
+            ComparisonOperator: "greater-than"
+          SuppressAlerts: False
+        - Name: "MessagesSent-Medium"
+          Metric: "aws:num-messages-sent"
+          Criteria:
+            ConsecutiveDatapointsToAlarm: 1
+            ConsecutiveDatapointsToClear: 1
+            StatisticalThreshold:
+              Statistic: p99
+            DurationSeconds: 3600
+            ComparisonOperator: "greater-than"
+          SuppressAlerts: False
+        - Name: "MessagesReceived-Medium"
+          Metric: "aws:num-messages-received"
+          Criteria:
+            ConsecutiveDatapointsToAlarm: 1
+            ConsecutiveDatapointsToClear: 1
+            StatisticalThreshold:
+              Statistic: p99
+            DurationSeconds: 3600
+            ComparisonOperator: "greater-than"
+          SuppressAlerts: False
+
+  DeviceSideSecurityMLProfile:
+    Condition: CreateDeviceMetricsMLProfile
+    Type: AWS::IoT::SecurityProfile
+    Properties:
+      SecurityProfileName: IoTDeviceDefenderDeviceMLProfile
+      SecurityProfileDescription: ML-based security profile related to device side metrics
+      AlertTargets:
+        SNS:
+          AlertTargetArn: !Ref IoTDetectViolationsTopic
+          RoleArn: !GetAtt IoTAllowSNSRole.Arn
+      TargetArns:
+        - !If [ DeviceMetricsAllDevices, !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:all/things' , !Ref DeviceTargetARNs]
+      Behaviors:
+        - Name: "DeviceListeningTCPPorts-High"
+          Metric: "aws:num-listening-tcp-ports"
+          Criteria:
+            MlDetectionConfig:
+              ConfidenceLevel: !Ref DetectMLConfidenceLevel
+          SuppressAlerts: False
+        - Name: "DeviceListeningUDPPorts-High"   
+          Metric: "aws:num-listening-udp-ports"
+          Criteria:
+            MlDetectionConfig:
+              ConfidenceLevel: !Ref DetectMLConfidenceLevel
+          SuppressAlerts: False
+        - Name: "DevicePacketsOut-Medium"
+          Metric: "aws:all-packets-out"
+          Criteria:
+            MlDetectionConfig:
+              ConfidenceLevel: !Ref DetectMLConfidenceLevel
+          SuppressAlerts: False
+        - Name: "DevicePacketsIn-Medium"
+          Metric: "aws:all-packets-in"
+          Criteria:
+            MlDetectionConfig:
+              ConfidenceLevel: !Ref DetectMLConfidenceLevel
+          SuppressAlerts: False
+
+
+  DeviceSideSecurityRulesProfile:
+    Condition: CreateDeviceMetricsRulesProfile
+    Type: AWS::IoT::SecurityProfile
+    Properties:
+      SecurityProfileName: IoTDeviceDefenderDeviceRulesProfile
+      SecurityProfileDescription: Rule-based security profile related to device side metrics
+      AlertTargets:
+        SNS:
+          AlertTargetArn: !Ref IoTDetectViolationsTopic
+          RoleArn: !GetAtt IoTAllowSNSRole.Arn
+      TargetArns:
+        - !If [ DeviceMetricsAllDevices, !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:all/things' , !Ref DeviceTargetARNs]
+      Behaviors:
+        - Name: "DeviceListeningTCPPorts-High"
+          Metric: "aws:num-listening-tcp-ports"
+          Criteria:
+            ConsecutiveDatapointsToAlarm: 1
+            ConsecutiveDatapointsToClear: 1
+            Value: 
+              Count: 0
+            ComparisonOperator: "less-than-equals"
+          SuppressAlerts: False
+        - Name: "DeviceListeningUDPPorts-High" 
+          Metric: "aws:num-listening-udp-ports"
+          Criteria:
+            ConsecutiveDatapointsToAlarm: 1
+            ConsecutiveDatapointsToClear: 1
+            Value: 
+              Count: 0
+            ComparisonOperator: "less-than-equals"
+          SuppressAlerts: False
+        - Name: "DevicePacketsOut-Medium"
+          Metric: "aws:all-packets-out"
+          Criteria:
+            ConsecutiveDatapointsToAlarm: 1
+            ConsecutiveDatapointsToClear: 1
+            StatisticalThreshold:
+              Statistic: p99
+            DurationSeconds: 3600
+            ComparisonOperator: "greater-than"
+          SuppressAlerts: False
+        - Name: "DevicePacketsIn-Medium"
+          Metric: "aws:all-packets-in"
+          Criteria:
+            ConsecutiveDatapointsToAlarm: 1
+            ConsecutiveDatapointsToClear: 1
+            StatisticalThreshold:
+              Statistic: p99
+            DurationSeconds: 3600
+            ComparisonOperator: "greater-than"
+          SuppressAlerts: False
+
   RegionalS3Objects:
      Type: "AWS::CloudFormation::Stack" 
      Properties:
@@ -53,11 +491,11 @@ Resources:
          - Key: Name
            Value: !Sub '${AWS::StackName}-CopyRegionalS3Bucket-NestedStack'
 
-  LambdaServiceRole:
+  LambdaServiceAuditRole:
     Type: 'AWS::IAM::Role'
     Properties:
-      RoleName: !Sub IoT-Defender-to-SecurityHub-Lambda-Role-${AWS::Region}     
-      Description: "Import IoT Defender finding to SecuriyHub"
+      RoleName: !Sub IoT-Defender-to-SecurityHub-Audit-Lambda-Role-${AWS::Region}     
+      Description: "Import AWS IoT Device Defender audit finding to SecuriyHub"
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -92,47 +530,130 @@ Resources:
                 Resource: 
                   - '*'
 
-  IoTSns:
-    Type: AWS::SNS::Topic
+  LambdaServiceDetectRole:
+    Type: 'AWS::IAM::Role'
     Properties:
-      DisplayName: IoT Defender report notification
-      TopicName: iot-defender-report-notification
-      KmsMasterKeyId: alias/aws/sns
+      RoleName: !Sub IoT-Defender-to-SecurityHub-Detect-Lambda-Role-${AWS::Region}     
+      Description: "Import AWS IoT Device Defender Detect violations to SecuriyHub"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: import-iotdefender-securityhub
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'securityhub:BatchImportFindings'
+                  - 'securityhub:UpdateFindings'
+                  - 'securityhub:BatchUpdateFindings'
+                  - 'securityhub:GetFindings'
+                Resource:
+                  - '*'
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
   
-  SnsSubscription:
+  SnsSubscriptionAudit:
     Type: AWS::SNS::Subscription
     Properties:
-      Endpoint: !GetAtt ServiceLambda.Arn
+      Endpoint: !GetAtt ServiceAuditLambda.Arn
       Protocol: lambda
-      TopicArn: !Ref IoTSns
+      TopicArn: !Ref IoTAuditFindingTopic
 
-  LambdaPermissions:
+  LambdaPermissionsAudit:
     Type: 'AWS::Lambda::Permission'
     Properties:
-      FunctionName: !Ref ServiceLambda
+      FunctionName: !Ref ServiceAuditLambda
       Action: 'lambda:InvokeFunction'
       Principal: sns.amazonaws.com
-      SourceArn: !Ref IoTSns
+      SourceArn: !Ref IoTAuditFindingTopic
 
-  ServiceLambda:
+  ServiceAuditLambda:
     Type: 'AWS::Lambda::Function'
     Properties:
-      FunctionName: "import-iot-defender-to-security-hub"
-      Handler: import_security_hub.lambda_handler
+      FunctionName: "import-iot-defender-audit-to-security-hub"
+      Handler: import_security_hub_audit.lambda_handler
       Runtime: python3.8
       Code:
         S3Bucket: !GetAtt RegionalS3Objects.Outputs.RegionalS3Bucket
         S3Key: !Sub '${S3SourcesPrefix}lambda_functions.zip'
-      Description: 'Imports IoT Defender findings to Security Hub'
-      Timeout: 900
-      Role: !GetAtt LambdaServiceRole.Arn
+      Description: 'Imports AWS IoT Device Defender audit findings to Security Hub'
+      Timeout: 30
+      Role: !GetAtt LambdaServiceAuditRole.Arn
       Environment:
         Variables:
-          Sns: !Ref IoTSns
+          Sns: !Ref IoTAuditFindingTopic
+  
+  SnsSubscriptionDetect:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !GetAtt ServiceDetectLambda.Arn
+      Protocol: lambda
+      TopicArn: !Ref IoTDetectViolationsTopic
 
-Outputs:
-  DeviceDefenderSNS:
-    Description: SNS used to analyze Device Defender results
-    Value: !Ref IoTSns
-    Export:
-      Name: "DeviceDefenderSNS"
+  ViolationUpdatedRule: 
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "Trigger event when violation is updated"
+      EventPattern: 
+        source: 
+          - "aws.iot"
+        detail-type: 
+          - "AWS API Call via CloudTrail"
+        detail: 
+          eventSource:
+            - "iot.amazonaws.com"
+          eventName: 
+            - "PutVerificationStateOnViolation"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: 
+            Fn::GetAtt: 
+              - "ServiceDetectLambda"
+              - "Arn"
+          Id: "LambdaDetectFuncionV1"
+
+
+  LambdaPermissionsDetectSNS:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref ServiceDetectLambda
+      Action: 'lambda:InvokeFunction'
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref IoTDetectViolationsTopic
+
+
+  LambdaPermissionsDetectEvent:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref ServiceDetectLambda
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ViolationUpdatedRule.Arn
+
+  ServiceDetectLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: "import-iot-defender-detect-to-security-hub"
+      Handler: import_security_hub_detect.lambda_handler
+      Runtime: python3.8
+      Code:
+        S3Bucket: !GetAtt RegionalS3Objects.Outputs.RegionalS3Bucket
+        S3Key: !Sub '${S3SourcesPrefix}lambda_functions.zip'
+      Description: 'Imports AWS IoT Device Defender detect violations to Security Hub'
+      Timeout: 30
+      Role: !GetAtt LambdaServiceDetectRole.Arn
+      Environment:
+        Variables:
+          Sns: !Ref IoTDetectViolationsTopic
