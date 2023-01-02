@@ -45,7 +45,7 @@ def map_iot_dd_audit_to_security_hub(finding):
     region = finding['region']
     partition = finding['partition']
     check_name = finding['checkName']
-    finding_id = f"arn:${partition}:iot-device-defender:{region}:{account_id}:audits/finding/{check_name}-{resource_id}"
+    finding_id = f"arn:{partition}:iot-device-defender:{region}:{account_id}:audits/finding/{check_name}-{resource_id}"
     task_id = finding['taskId']
     audit_arn = finding['auditARN']
     record_state = RECORDSTATE_ACTIVE
